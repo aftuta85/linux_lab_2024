@@ -106,6 +106,7 @@ int main(void)
     srand((uintptr_t) &main);
 
     test_t tests[] = {
+        {.name = "timsort_orig", .impl = timsort_orig},
         {.name = "timesort", .impl = timsort},
         {NULL, NULL},
     };
