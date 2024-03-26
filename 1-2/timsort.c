@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -18,6 +19,7 @@ struct pair {
 };
 
 static size_t stk_size;
+static size_t min_run;
 
 static struct list_head *merge(void *priv,
                                list_cmp_func_t cmp,
@@ -99,13 +101,74 @@ static void merge_final(void *priv,
     build_prev_link(head, tail, b);
 }
 
+static struct list_head *get_list_mid(struct list_head *start,
+                                      struct list_head *end)
+{
+    struct list_head **indir = &start;
+    for (struct list_head *fast = start->next; fast != end && fast->next != end;
+         fast = fast->next->next)
+        indir = &(*indir)->next;
+    return *indir;
+}
+
+static struct pair binary_insert_run(void *priv,
+                                     struct list_head *head,
+                                     struct list_head *tail,
+                                     struct list_head *new_node,
+                                     list_cmp_func_t cmp)
+{
+    struct pair result;
+    struct list_head *left = head, *right = tail, *prev = head;
+    while (left != right) {
+        struct list_head *mid = get_list_mid(left, right);
+        if (cmp(priv, mid, new_node) > 0) {
+            right = mid;
+        } else {
+            prev = mid;
+            left = mid->next;
+        }
+    }
+
+    // The new_node is the smallest in the list
+    if (left == head) {
+        new_node->prev = prev->prev;
+        new_node->next = prev;
+        prev->prev = new_node;
+        result.head = new_node;
+        result.next = tail;
+        return result;
+    }
+    // The new_node is the largest in the list
+    if (left == tail && cmp(priv, tail, new_node) <= 0) {
+        new_node->next = tail->next;
+        tail->next = new_node;
+        new_node->prev = tail;
+        tail = new_node;
+        result.head = head;
+        result.next = tail;
+        return result;
+    }
+
+    struct list_head *next = prev->next;
+    new_node->prev = next->prev;
+    new_node->next = next;
+    prev->next = new_node;
+    if (next)
+        next->prev = new_node;
+    result.head = head;
+    result.next = tail;
+    return result;
+}
+
 static struct pair find_run(void *priv,
                             struct list_head *list,
                             list_cmp_func_t cmp)
 {
     size_t len = 1;
-    struct list_head *next = list->next, *head = list;
+    struct list_head *next = list->next, *head = list, *tail = head,
+                     *tmp_next = NULL;
     struct pair result;
+    struct pair bir_result;
 
     if (!next) {
         result.head = head, result.next = next;
@@ -124,6 +187,14 @@ static struct pair find_run(void *priv,
             head = list;
         } while (next && cmp(priv, list, next) > 0);
         list->next = prev;
+        while (next && len < min_run) {
+            len++;
+            tmp_next = next;
+            next = next->next;
+            bir_result = binary_insert_run(priv, head, tail, tmp_next, cmp);
+            head = bir_result.head, tail = bir_result.next;
+            list = head;
+        }
     } else {
         do {
             len++;
@@ -131,6 +202,15 @@ static struct pair find_run(void *priv,
             next = list->next;
         } while (next && cmp(priv, list, next) <= 0);
         list->next = NULL;
+        while (next && len < min_run) {
+            len++;
+            tmp_next = next;
+            next = next->next;
+            tail = list;
+            bir_result = binary_insert_run(priv, head, tail, tmp_next, cmp);
+            head = bir_result.head, tail = bir_result.next;
+            list = tail;
+        }
     }
     head->prev = NULL;
     head->next->prev = (struct list_head *) len;
@@ -190,9 +270,33 @@ static struct list_head *merge_collapse(void *priv,
     return tp;
 }
 
+static int get_data_length(const struct list_head *const head)
+{
+    struct list_head *curr = NULL;
+    int count = 0;
+    list_for_each (curr, head)
+        count++;
+    return count;
+}
+
+static void set_minrun(int data_length)
+{
+    if (data_length < 64) {
+        min_run = data_length;
+        return;
+    }
+
+    int zeros = __builtin_clz(data_length);
+    int shift = (sizeof(data_length) * CHAR_BIT) - zeros - 6;
+    int remain = !!(~((~0) << shift) & data_length);
+    min_run = (data_length >> shift) + remain;
+}
+
 void timsort(void *priv, struct list_head *head, list_cmp_func_t cmp)
 {
     stk_size = 0;
+    int data_length = get_data_length(head);
+    set_minrun(data_length);
 
     struct list_head *list = head->next, *tp = NULL;
     if (head == head->prev)
