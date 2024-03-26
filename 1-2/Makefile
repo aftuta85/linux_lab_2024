@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -g
 
-SRCS = main.c timsort.c
+SRCS = main.c timsort.c timsort_orig.c
 OBJS = $(SRCS:.c=.o)
 
 main: $(OBJS)
